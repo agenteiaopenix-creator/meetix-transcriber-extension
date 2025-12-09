@@ -1,0 +1,40 @@
+{
+    "manifest_version": 3,
+    "name": "MEETIX Transcriber",
+    "version": "0.1.0",
+    "description": "MEETIX Transcriber: Transcribe Google Meet leyendo subtítulos locales y exporta .txt con timestamps (ES).",
+    "permissions": ["downloads","storage","scripting","activeTab","tabs","alarms"],
+    "host_permissions": [
+        "https://meet.google.com/*"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "icons": {
+        "16": "icons/icono-MEETIX-16.png",
+        "32": "icons/icono-MEETIX-32.png",
+        "48": "icons/icono-MEETIX-48.png",
+        "128": "icons/icono-MEETIX-128.png"
+    },
+    "action": {
+        "default_title": "MEETIX Transcriber — Exportar .txt",
+        "default_popup": "popup.html",
+        "default_icon": {
+            "16": "icons/icono-MEETIX-16.png",
+            "32": "icons/icono-MEETIX-32.png"
+        }
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://meet.google.com/*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle",
+            "all_frames": true,
+            "match_about_blank": true
+        }
+    ]
+}

@@ -35,6 +35,16 @@
             "run_at": "document_idle",
             "all_frames": true,
             "match_about_blank": true
+        },
+        {
+            "matches": [
+                "https://task-flow-opx-trial.vercel.app/*",
+                "https://task-flow-opx-beta.vercel.app/*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle"
         }
     ]
 }

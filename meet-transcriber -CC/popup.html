@@ -65,8 +65,13 @@ small { color: #555; }
 .info-banner { font-size:12px; color:#444; background:#fff6d5; border:1px solid #ffe08a; border-radius:6px; padding:8px; margin:6px 0 10px; }
 .wrap { position: relative; }
 /* Spinner overlay (busy state) */
-.spinner { display:none; position:absolute; inset:0; z-index: 999; background: rgba(255, 243, 224, 0.75); align-items:center; justify-content:center; gap:10px; font-size:13px; color:#444; }
+.spinner { display:none; position:fixed; inset:0; z-index: 999; background: rgba(255, 243, 224, 0.75); align-items:center; justify-content:center; gap:10px; font-size:13px; color:#444; }
 .spinner .dot { width:14px; height:14px; border:2px solid #4a90e2; border-top-color: transparent; border-radius:50%; animation: spin 0.9s linear infinite; }
+/* Variantes de color para login/logout */
+.spinner.login { color:#1f3d6b; }
+.spinner.login .dot { border-color:#4a90e2; border-top-color:transparent; }
+.spinner.logout { color:#7b3d1a; }
+.spinner.logout .dot { border-color:#e67e22; border-top-color:transparent; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* Lista de sesiones guardadas */
 .sessions { margin-top: 12px; }
@@ -75,19 +80,36 @@ small { color: #555; }
 .session-item .date { width:64px; text-align:center; font-weight:600; color:#444; }
 .session-item .meta { flex:1; font-size:12px; color:#555; display:flex; flex-direction:column; }
 .session-item .actions { display:flex; gap:8px; }
+/* Login box */
+.login-box { display:block; padding:12px; border:1px solid #c9d7f1; background:#eef4ff; color:#22447a; border-radius:10px; font-size:13px; }
+.login-box .title { font-weight:600; margin-bottom:6px; }
+.login-box .tip { font-size:12px; color:#445b8a; margin-top:6px; }
+/* Perfil (sesión) */
+.profile-card { display:none; margin-top:10px; border:1px solid #d7e3ff; background:#f6faff; color:#22447a; border-radius:10px; padding:10px; }
+.profile-card .profile-title { font-weight:600; font-size:12px; margin-bottom:6px; color:#1f3d6b; }
+.profile-card .profile-line { font-size:12px; color:#345389; margin:2px 0; }
+.profile-card .profile-line .label { color:#6b84a8; }
+.profile-card a { color:#345389; text-decoration:underline; }
 </style>
 </head>
 <body>
 <div class="wrap">
 <h3 style="margin:0 0 8px;">MEETIX Transcriber</h3>
-<div class="header-row">
+<div class="header-row" style="display:none;" id="featuresHeader">
   <div class="section-title">Transcripciones</div>
   <div class="auto-mini">
     <input type="checkbox" id="autoUpload" />
     <label for="autoUpload">Subir automáticamente</label>
   </div>
   </div>
-<div id="infoBanner" class="info-banner">Para transcribir y subir, deja esta ventana abierta. Cierrala al finalizar la llamada.</div>
+<!-- Mensaje de requisito de sesión -->
+<div id="loginRequired" class="login-box" style="display:block;">
+  <div class="title">Para usar las transcripciones, inicia sesión en TaskFlow</div>
+  Tu sesión permite subir y descargar tus transcripciones de manera segura. 
+  Si cierras sesión en TaskFlow, volverás a ver este aviso.
+  
+</div>
+<div id="infoBanner" class="info-banner" style="display:none;">Para transcribir y subir, deja esta ventana abierta. Ciérrala al finalizar la llamada.</div>
 <div id="session-card" class="card" style="display:none;">
   
   <div class="date" id="date">—</div>
@@ -107,32 +129,19 @@ small { color: #555; }
   </div>
   <span id="status" class="status status-ready" title="Estado">Listo para exportar</span>
 </div>
-<p><small>Los <strong>Subtítulos</strong> se activan automáticamente al entrar en la reunión.</small></p>
+<p id="subsInfo" style="display:none;"><small>Los <strong>Subtítulos</strong> se activan automáticamente al entrar en la reunión.</small></p>
 
-<div class="sessions" id="sessions">
+<div class="sessions" id="sessions" style="display:none;">
   <h4>El límite de sesiones sin subir es de 5</h4>
   <div id="sessionsList"></div>
-  <small style="color:#777;">Las sesiones eliminadas o subidas se quitan del listado.</small>
+  <small id="sessionsInfo" style="color:#777;">Las sesiones eliminadas o subidas se quitan del listado.</small>
   </div>
 
-<div id="emailWrap" class="email-wrap">
-  <label for="selfName">Ingrese nombre</label>
-  <div class="email-row">
-    <input type="text" id="selfName" placeholder="Tu nombre en Meet" title="Ingresa tu nombre tal como aparece en Meet" required />
-  </div>
-  <label for="email">Ingrese correo</label>
-  <div class="email-row">
-    <input type="email" id="email" placeholder="tu@correo.com" pattern="^[^\s@]+@[^\s@]+\.com(?:\.ar)?$" title="Formato: usuario@dominio.com o usuario@dominio.com.ar" required />
-    <button id="saveEmail" class="btn-primary">Guardar</button>
-  </div>
-  <small id="emailMsg" class="email-msg"></small>
-  <small id="nameMsg" class="email-msg"></small>
-  </div>
-
-
-<div id="editEmailLink" class="edit-link">Editar nombre o correo</div>
-<small id="emailView" style="display:none; color:#666;">Correo: <span id="emailText"></span></small>
-<small id="nameView" style="display:none; color:#666;">Nombre: <span id="nameText"></span></small>
+<div id="profileCard" class="profile-card" style="display:none;">
+  <div class="profile-title">Cuenta</div>
+  <div id="nameView" class="profile-line" style="display:none;"><span class="label">Nombre:</span> <span id="nameText"></span></div>
+  <div id="emailView" class="profile-line" style="display:none;"><span class="label">Correo:</span> <span id="emailText"></span></div>
+</div>
 <div id="supabaseNotice" class="notice"></div>
 <div id="busy" class="spinner"><div class="dot"></div><span>Procesando…</span></div>
 <div class="brand"><img src="icons/Openix-icon.png" alt="Openix" /><span>Powered by Openix</span></div>

@@ -1,5 +1,5 @@
 // --- Estado ---
-const state = { transcript: [], startedAt: null, capturing: true, selfName: null, exporting: false, compatActive: false, compatAuto: true, noiseStreak: 0, lastEventAt: 0, lastBacklogSaveKey: '', lastBacklogSaveAt: 0, lastBacklogSig: '' };
+const state = { transcript: [], startedAt: null, capturing: true, selfName: null, exporting: false, compatActive: false, compatAuto: true, noiseStreak: 0, lastEventAt: 0, lastBacklogSaveKey: '', lastBacklogSaveAt: 0, lastBacklogSig: '', accessToken: null };
 // UI window control / notifications
 let uiWindowId = null;
 let notificationHandlersRegistered = false;
@@ -32,6 +32,73 @@ function normalizeSpeaker(s) {
     return nm || "Tú";
   }
   return base || "Tú";
+}
+
+// --- Perfil del usuario desde snapshot de la página ---
+function extractEmailFromSnapshot(data) {
+  try {
+    const d = data || {};
+    const email = d?.user?.email || d?.email || '';
+    const val = String(email || '').trim();
+    if (!val) return '';
+    // Validación básica
+    const ok = /.+@.+\..+/.test(val);
+    return ok ? val : '';
+  } catch { return ''; }
+}
+function extractNameFromSnapshot(data) {
+  try {
+    const d = data || {};
+    const name = d?.user?.full_name || d?.full_name || '';
+    const val = String(name || '').trim();
+    return val || '';
+  } catch { return ''; }
+}
+async function updateProfileFromSnapshot(data, origin) {
+  try {
+    const isEmpty = !data || (typeof data === 'object' && Object.keys(data).length === 0);
+    if (isEmpty) {
+      await clearProfileAndNotify('empty_snapshot', origin);
+      return;
+    }
+    const email = extractEmailFromSnapshot(data);
+    const name = extractNameFromSnapshot(data);
+    const accessToken = String(data?.access_token || '').trim();
+    const updates = {};
+    if (email) updates.userEmail = email;
+    if (name) { updates.selfName = name; state.selfName = name; }
+    if (accessToken) { state.accessToken = accessToken; updates.accessToken = accessToken; }
+    if (Object.keys(updates).length) {
+      await chrome.storage?.local?.set?.(updates);
+      try { chrome.runtime?.sendMessage?.({ type: 'SELF_NAME_UPDATED' }); } catch {}
+      try { chrome.runtime?.sendMessage?.({ type: 'PROFILE_UPDATED', payload: { email, name } }); } catch {}
+      console.info('[MEETIX] Perfil actualizado desde página:', { origin, email, name, hasToken: !!accessToken });
+    } else {
+      console.debug('[MEETIX] Snapshot recibido sin perfil útil', { origin });
+    }
+  } catch (e) {
+    console.warn('[MEETIX] updateProfileFromSnapshot fallo:', e);
+  }
+}
+async function initProfileFromLastPageLocalStorage() {
+  try {
+    const s = await chrome.storage?.local?.get?.('lastPageLocalStorage');
+    const rec = s?.lastPageLocalStorage;
+    if (!rec || !rec.data) return;
+    await updateProfileFromSnapshot(rec.data, rec.origin);
+  } catch {}
+}
+
+async function clearProfileAndNotify(reason = 'clear', origin = '') {
+  try {
+    state.selfName = null;
+    state.accessToken = null;
+    await chrome.storage?.local?.remove?.(['userEmail','selfName','accessToken']);
+    try { chrome.runtime?.sendMessage?.({ type: 'SESSION_CLEARED', payload: { reason, origin } }); } catch {}
+    console.info('[MEETIX] Perfil limpiado:', { reason, origin });
+  } catch (e) {
+    console.warn('[MEETIX] clearProfile error:', e);
+  }
 }
 // Heurística ligera para detectar texto de discurso humano
 function looksLikeSpeech(s) {
@@ -800,9 +867,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     switch (msg?.type) {
       case "PING": {
         // Cargar nombre propio si no está aún en memoria
-        (async () => { await getSelfName(); })();
+        (async () => {
+          try {
+            await getSelfName();
+            await initProfileFromLastPageLocalStorage();
+          } catch {}
+        })();
         sendResponse?.({ ok: true, sw: "alive" });
         return;
+      }
+      case "LOCALSTORAGE_DATA": {
+        // Mensaje reenviado por el content script desde la página (window.postMessage)
+        (async () => {
+          try {
+            const origin = String(msg.origin || '');
+            const data = msg.payload || {};
+            const rec = { origin, ts: Date.now(), data };
+            await chrome.storage?.local?.set?.({ lastPageLocalStorage: rec });
+            try { await updateProfileFromSnapshot(data, origin); } catch (e) { console.warn('[MEETIX] updateProfileFromSnapshot error:', e); }
+            sendResponse?.({ ok: true });
+          } catch (e) {
+            sendResponse?.({ ok: false, error: String(e) });
+          }
+        })();
+        return true;
+      }
+      case "GET_LAST_PAGE_LOCALSTORAGE": {
+        (async () => {
+          try {
+            const s = await chrome.storage?.local?.get?.('lastPageLocalStorage');
+            sendResponse?.({ ok: true, data: s?.lastPageLocalStorage || null });
+          } catch (e) {
+            sendResponse?.({ ok: false, error: String(e) });
+          }
+        })();
+        return true;
       }
       case "SELF_NAME_UPDATED": {
         (async () => {

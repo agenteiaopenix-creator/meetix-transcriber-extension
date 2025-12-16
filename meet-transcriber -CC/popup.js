@@ -1,4 +1,31 @@
 let uiExporting = false;
+let uiLastHasUser = null; // estado previo de sesión para mostrar spinner solo en transiciones
+let uiAuthFlashLock = false; // evita flashes simultáneos
+// Flags de UI persistentes se manejan vía chrome.storage.local
+
+function flashSpinner(message, ms = 1500, mode = 'login') {
+  try {
+    if (uiAuthFlashLock) return;
+    uiAuthFlashLock = true;
+    const busy = document.getElementById('busy');
+    if (!busy) return;
+    // Aplicar variante visual
+    busy.classList.remove('login','logout');
+    busy.classList.add(mode === 'logout' ? 'logout' : 'login');
+    const label = busy.querySelector('span');
+    const prevText = label ? label.textContent : 'Procesando…';
+    const defaultMsg = mode === 'logout' ? 'Cerrando sesión de TaskFlow…' : 'Autenticando…';
+    if (label) label.textContent = message || defaultMsg;
+    setBusy(true);
+    setTimeout(() => {
+      try { if (label) label.textContent = prevText || 'Procesando…'; } catch {}
+      busy.classList.remove('login','logout');
+      // Si hay exportación en curso, mantenemos el spinner visible
+      if (!uiExporting) setBusy(false);
+      uiAuthFlashLock = false;
+    }, ms);
+  } catch {}
+}
 
 function send(type, payload) {
   return new Promise((resolve) => {
@@ -94,122 +121,12 @@ function send(type, payload) {
     });
   } catch {}
 
-  // Inicializar UI de correo (mostrar sólo si no está guardado)
+  // Renderizar requisito de inicio de sesión (sin inputs ni botón)
   try {
-    const wrap = document.getElementById('emailWrap');
-    const msgEl = document.getElementById('emailMsg');
-    const nameMsgEl = document.getElementById('nameMsg');
-    const inputEl = document.getElementById('email');
-    const nameEl = document.getElementById('selfName');
-    const btnSave = document.getElementById('saveEmail');
-    const editLink = document.getElementById('editEmailLink');
-    const emailView = document.getElementById('emailView');
-    const nameView = document.getElementById('nameView');
-    const emailText = document.getElementById('emailText');
-    const nameText = document.getElementById('nameText');
-    const autoToggle = document.getElementById('autoUpload');
-    const autoMsg = document.getElementById('autoMsg');
-    const data = await chrome.storage?.local?.get?.(['userEmail','selfName']);
-    const hasEmail = !!(data && data.userEmail);
-    const hasName = !!(data && data.selfName);
-    const hasProfile = hasEmail && hasName;
-    if (wrap) wrap.style.display = hasProfile ? 'none' : 'block';
-    if (editLink) editLink.style.display = hasProfile ? 'inline' : 'none';
-    if (emailView) emailView.style.display = hasEmail ? 'block' : 'none';
-    if (nameView) nameView.style.display = hasName ? 'block' : 'none';
-    if (emailText && hasEmail) emailText.textContent = String(data.userEmail);
-    if (nameText && hasName) nameText.textContent = String(data.selfName);
-    try {
-      const s = await chrome.storage?.local?.get?.('autoUploadOnEnd');
-      const enabled = !!(s && s.autoUploadOnEnd);
-      if (autoToggle) autoToggle.checked = enabled;
-      if (autoMsg) autoMsg.textContent = enabled ? '' : '';
-      // Guardar cambios
-      if (autoToggle) {
-        autoToggle.addEventListener('change', async () => {
-          try {
-            await chrome.storage?.local?.set?.({ autoUploadOnEnd: !!autoToggle.checked });
-          } catch {}
-        });
-      }
-    } catch {}
-    if (editLink && inputEl && nameEl && wrap) {
-      editLink.addEventListener('click', async () => {
-        try {
-          const cur = await chrome.storage?.local?.get?.(['userEmail','selfName']);
-          const email = (cur && cur.userEmail) ? String(cur.userEmail) : '';
-          const sname = (cur && cur.selfName) ? String(cur.selfName) : '';
-          inputEl.value = email;
-          nameEl.value = sname;
-        } catch {}
-        wrap.style.display = 'block';
-        editLink.style.display = 'none';
-        if (emailView) emailView.style.display = 'none';
-        if (nameView) nameView.style.display = 'none';
-        if (msgEl) { msgEl.textContent = ''; msgEl.style.color = '#2e7d32'; }
-        if (nameMsgEl) { nameMsgEl.textContent = ''; nameMsgEl.style.color = '#2e7d32'; }
-      });
-    }
-    if (btnSave && inputEl && nameEl) {
-      btnSave.addEventListener('click', async () => {
-        const val = String(inputEl.value || '').trim();
-        const nameVal = String(nameEl.value || '').trim();
-        const validEmail = /^[^\s@]+@[^\s@]+\.com(?:\.ar)?$/.test(val);
-        const validName = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s.'-]{1,}$/.test(nameVal);
-        if (!validEmail || !validName) {
-          if (!validEmail && msgEl) { msgEl.textContent = 'Correo inválido (.com o .com.ar requerido)'; msgEl.style.color = '#8a1c1f'; }
-          if (!validName && nameMsgEl) { nameMsgEl.textContent = 'Nombre inválido'; nameMsgEl.style.color = '#8a1c1f'; }
-          return;
-        }
-        try {
-          await chrome.storage?.local?.set?.({ userEmail: val, selfName: nameVal });
-          try { await send('SELF_NAME_UPDATED'); } catch {}
-          if (msgEl) { msgEl.textContent = 'Guardado'; msgEl.style.color = '#2e7d32'; }
-          if (nameMsgEl) { nameMsgEl.textContent = 'Guardado'; nameMsgEl.style.color = '#2e7d32'; }
-          if (wrap) wrap.style.display = 'none';
-          if (editLink) editLink.style.display = 'inline';
-          if (emailView) { emailView.style.display = 'block'; }
-          if (nameView) { nameView.style.display = 'block'; }
-          if (emailText) { emailText.textContent = val; }
-          if (nameText) { nameText.textContent = nameVal; }
-        } catch (e) {
-          if (msgEl) { msgEl.textContent = 'Error guardando correo'; msgEl.style.color = '#8a1c1f'; }
-          if (nameMsgEl) { nameMsgEl.textContent = 'Error guardando nombre'; nameMsgEl.style.color = '#8a1c1f'; }
-        }
-      });
-      // Validación en tiempo real y deshabilitar botón si alguno es inválido
-      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.com(?:\.ar)?$/;
-      const NAME_RE = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s.'-]{1,}$/;
-      const validateProfileUI = () => {
-        try {
-          const val = String(inputEl.value || '').trim();
-          const nameV = String(nameEl.value || '').trim();
-          const okEmail = EMAIL_RE.test(val);
-          const okName = NAME_RE.test(nameV);
-          const ok = okEmail && okName;
-          if (btnSave) btnSave.disabled = !ok;
-          if (msgEl) {
-            msgEl.textContent = okEmail ? '' : 'Correo inválido (.com o .com.ar requerido)';
-            msgEl.style.color = okEmail ? '#2e7d32' : '#8a1c1f';
-          }
-          if (nameMsgEl) {
-            nameMsgEl.textContent = okName ? '' : 'Nombre inválido';
-            nameMsgEl.style.color = okName ? '#2e7d32' : '#8a1c1f';
-          }
-          inputEl.setAttribute('aria-invalid', String(!okEmail));
-          nameEl.setAttribute('aria-invalid', String(!okName));
-        } catch {}
-      };
-      try {
-        inputEl.addEventListener('input', validateProfileUI);
-        inputEl.addEventListener('blur', validateProfileUI);
-        nameEl.addEventListener('input', validateProfileUI);
-        nameEl.addEventListener('blur', validateProfileUI);
-        // Inicializar estado al mostrar el formulario
-        validateProfileUI();
-      } catch {}
-    }
+    await renderLoginRequirement();
   } catch {}
+  // Sincronizar toggle de auto-subida
+  try { await syncAutoUploadToggle(); } catch {}
 })();
 
 function setBusy(on) {
@@ -218,11 +135,101 @@ function setBusy(on) {
     if (!busy) return;
     busy.style.display = on ? 'flex' : 'none';
     const card = document.getElementById('session-card');
-    const hdr = document.querySelector('.header-row');
+    const hdr = document.getElementById('featuresHeader') || document.querySelector('.header-row');
     const sessions = document.getElementById('sessions');
-    if (card) card.style.display = on ? 'none' : (card.style.display || 'flex');
-    if (hdr) hdr.style.display = on ? 'none' : 'flex';
-    if (sessions) sessions.style.display = on ? 'none' : (sessions.style.display || 'block');
+    const loginMsg = document.getElementById('loginRequired');
+    const allowUI = !(loginMsg && loginMsg.style.display !== 'none'); // true si login NO está visible
+    if (card) card.style.display = on ? 'none' : (allowUI ? (card.style.display || 'flex') : 'none');
+    if (hdr) hdr.style.display = on ? 'none' : (allowUI ? 'flex' : 'none');
+    if (sessions) sessions.style.display = on ? 'none' : (allowUI ? (sessions.style.display || 'block') : 'none');
+  } catch {}
+}
+
+// Renderizar aviso de login en TaskFlow y sincronizar perfil (userEmail/selfName) con lastPageLocalStorage
+async function renderLoginRequirement() {
+  try {
+    const emailWrap = document.getElementById('emailWrap');
+    const emailView = document.getElementById('emailView');
+    const nameView = document.getElementById('nameView');
+    const emailText = document.getElementById('emailText');
+    const nameText = document.getElementById('nameText');
+    const profileCard = document.getElementById('profileCard');
+    const notice = document.getElementById('supabaseNotice');
+    const loginBox = document.getElementById('loginRequired');
+    const hdr = document.getElementById('featuresHeader') || document.querySelector('.header-row');
+    const infoBanner = document.getElementById('infoBanner');
+    const sessions = document.getElementById('sessions');
+    const subsInfo = document.getElementById('subsInfo');
+    const card = document.getElementById('session-card');
+
+    // Nunca mostrar inputs/botón de email
+    if (emailWrap) emailWrap.style.display = 'none';
+
+    const s = await chrome.storage?.local?.get?.(['lastPageLocalStorage','userEmail','selfName','uiPrevHasUser','uiInitialEmptySpinnerShown']);
+    const last = s?.lastPageLocalStorage;
+    const user = last?.data?.user;
+    const hasUser = !!(user && user.email && (user.full_name || user.name));
+    const prevHadUser = !!(s && s.uiPrevHasUser);
+    const initialEmptyShown = !!(s && s.uiInitialEmptySpinnerShown);
+    const hasLastKey = !!(s && Object.prototype.hasOwnProperty.call(s, 'lastPageLocalStorage'));
+
+    if (hasUser) {
+      // Mostrar spinner solo en la primera detección de login o transición real desde sin sesión
+      try {
+        if (prevHadUser !== true) {
+          flashSpinner('Autenticando…', 1500, 'login');
+        }
+      } catch {}
+      const email = String(user.email || '');
+      const fullname = String(user.full_name || user.name || '');
+      // Sincronizar perfil local para el resto del flujo que depende de userEmail/selfName
+      try { await chrome.storage?.local?.set?.({ userEmail: email, selfName: fullname, userName: fullname, uiPrevHasUser: true }); } catch {}
+      // Mostrar datos de sesión
+      if (notice) notice.style.display = 'none';
+      if (loginBox) loginBox.style.display = 'none';
+      if (hdr) hdr.style.display = 'flex';
+      // Mantener infoBanner controlado por refreshSessionCard (meetingActive + autoUpload)
+      if (infoBanner) infoBanner.style.display = infoBanner.style.display || 'none';
+      if (subsInfo) subsInfo.style.display = 'block';
+      if (sessions) sessions.style.display = 'block';
+      // No tocar session-card aquí; lo maneja refreshSessionCard
+      if (profileCard) profileCard.style.display = 'block';
+      if (emailView) emailView.style.display = email ? 'block' : 'none';
+      if (nameView) nameView.style.display = fullname ? 'block' : 'none';
+      if (emailText) emailText.textContent = email;
+      if (nameText) nameText.textContent = fullname;
+    } else {
+      // Limpiar perfil y mostrar aviso de login requerido
+      try { await chrome.storage?.local?.remove?.(['userEmail','selfName','userName']); } catch {}
+      if (emailView) emailView.style.display = 'none';
+      if (nameView) nameView.style.display = 'none';
+      // Mostrar spinner profesional al limpiar sesión
+      try {
+        // Condiciones para mostrar spinner en "sin sesión":
+        // 1) Transición real de sesión → sin sesión (persistente)
+        // 2) Si existe lastPageLocalStorage pero está vacío (solo una vez)
+        //    No mostrar nada si la clave no existe (primer instalación).
+        if (prevHadUser === true) {
+          flashSpinner('Cerrando sesión de TaskFlow…', 1500, 'logout');
+          try { await chrome.storage?.local?.set?.({ uiPrevHasUser: false, uiInitialEmptySpinnerShown: true }); } catch {}
+        } else if (hasLastKey && !initialEmptyShown) {
+          flashSpinner('Cerrando sesión de TaskFlow…', 1500, 'logout');
+          try { await chrome.storage?.local?.set?.({ uiInitialEmptySpinnerShown: true }); } catch {}
+        }
+      } catch {}
+      if (profileCard) profileCard.style.display = 'none';
+      if (notice) notice.style.display = 'none';
+      if (loginBox) loginBox.style.display = 'block';
+      if (hdr) hdr.style.display = 'none';
+      if (infoBanner) infoBanner.style.display = 'none';
+      if (subsInfo) subsInfo.style.display = 'none';
+      if (sessions) sessions.style.display = 'none';
+      // No tocar session-card aquí; queda oculto por defecto
+    }
+    // Actualizar estado previo para futuras transiciones
+    uiLastHasUser = !!hasUser;
+    // Persistir última impresión de sesión para próximas aperturas
+    try { await chrome.storage?.local?.set?.({ uiPrevHasUser: !!hasUser }); } catch {}
   } catch {}
 }
 
@@ -311,6 +318,23 @@ async function safeSend(type, payload, retries = 2, delay = 250) {
   return res;
 }
 
+// Sincroniza el checkbox de auto-subida con storage y mantiene cambios
+async function syncAutoUploadToggle() {
+  try {
+    const autoToggle = document.getElementById('autoUpload');
+    if (!autoToggle) return;
+    const s = await chrome.storage?.local?.get?.('autoUploadOnEnd');
+    const enabled = !!(s && s.autoUploadOnEnd);
+    autoToggle.checked = enabled;
+    if (!autoToggle.dataset.bound) {
+      autoToggle.addEventListener('change', async () => {
+        try { await chrome.storage?.local?.set?.({ autoUploadOnEnd: !!autoToggle.checked }); } catch {}
+      });
+      autoToggle.dataset.bound = '1';
+    }
+  } catch {}
+}
+
 // Controles de captura (si existen en el DOM)
 const btnStart = document.getElementById('start');
 if (btnStart) {
@@ -341,7 +365,7 @@ document.getElementById('download').addEventListener('click', async () => {
       const box = document.getElementById('supabaseNotice');
       if (box) {
         box.className = 'notice error';
-        box.textContent = 'Completa nombre y correo para exportar (descargar y subir).';
+        box.textContent = 'Debes iniciar sesión en TaskFlow para exportar.';
         box.style.display = 'block';
       }
       setBusy(false);
@@ -356,13 +380,8 @@ document.getElementById('download').addEventListener('click', async () => {
     if (box) {
       if (r?.reason === 'missing_email') {
         box.className = 'notice error';
-        box.textContent = 'Ingresa un correo para exportar (descargar y subir).';
+        box.textContent = 'Debes iniciar sesión en TaskFlow para exportar.';
         box.style.display = 'block';
-        // Mostrar el formulario de correo si está oculto
-        try {
-          const wrap = document.getElementById('emailWrap');
-          if (wrap) wrap.style.display = 'block';
-        } catch {}
       } else
       if (r?.ok && r?.uploaded) {
         box.className = 'notice success';
@@ -431,6 +450,13 @@ async function renderSessionsList(disableActions) {
   const res = await safeSend('GET_SESSIONS');
   if (!res?.ok) { wrap.style.display = 'none'; return; }
   const sessions = Array.isArray(res.sessions) ? res.sessions : [];
+  // Mostrar el título en negrita sólo si hay elementos en el listado
+  try {
+    const titleEl = wrap.querySelector('h4');
+    if (titleEl) titleEl.style.display = sessions.length ? 'block' : 'none';
+    const infoEl = document.getElementById('sessionsInfo');
+    if (infoEl) infoEl.style.display = sessions.length ? 'inline' : 'none';
+  } catch {}
   // Respetar estado de exportación: si está exportando, ocultar listado aunque existan sesiones
   if (uiExporting) {
     wrap.style.display = 'none';
@@ -602,4 +628,19 @@ try {
     } catch {}
   }, 900);
   window.addEventListener('unload', () => { try { clearInterval(pollTimer); } catch {} });
+} catch {}
+
+// Re-renderizar UI de sesión cuando cambie lastPageLocalStorage (login/logout de TaskFlow)
+try {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    try {
+      if (area !== 'local') return;
+      if (changes?.lastPageLocalStorage) {
+        renderLoginRequirement();
+      }
+      if (changes?.autoUploadOnEnd) {
+        syncAutoUploadToggle();
+      }
+    } catch {}
+  });
 } catch {}

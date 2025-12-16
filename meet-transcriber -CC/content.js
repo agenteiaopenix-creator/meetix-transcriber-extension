@@ -26,6 +26,40 @@
     } catch {}
   }
 
+  // --- Puente page → content → background ---
+  // Permite capturar mensajes enviados desde la propia página (window.postMessage)
+  // y reenviarlos al Service Worker. Valida mismo origen por seguridad.
+  function readLocalStorageSafe() {
+    const out = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (typeof k === 'string') out[k] = localStorage.getItem(k);
+      }
+    } catch {}
+    return out;
+  }
+
+  try {
+    window.addEventListener('message', (event) => {
+      try {
+        if (event.source !== window) return; // solo mensajes del mismo contexto
+        const origin = String(event.origin || '');
+        const sameOrigin = origin === String(location.origin || '');
+        if (!sameOrigin) return; // rechazar cross‑origin
+        const data = event.data;
+        if (!data || (data.source !== 'MEETIX_PAGE' && data.__meetix !== true)) return;
+        const type = String(data.type || '');
+        if (type === 'LOCALSTORAGE_DATA') {
+          sendMessageSafe({ type: 'LOCALSTORAGE_DATA', origin, payload: data.payload || {} });
+        } else if (type === 'GET_LOCALSTORAGE') {
+          const payload = readLocalStorageSafe();
+          sendMessageSafe({ type: 'LOCALSTORAGE_DATA', origin, payload });
+        }
+      } catch {}
+    });
+  } catch {}
+
   function setSelfNameLocal(name) {
     const nm = String(name || "").trim();
     if (!nm) return;
@@ -1291,6 +1325,16 @@
     if (msg?.type === "MVP_START") start();
     if (msg?.type === "MVP_STOP") stop();
     if (msg?.type === "MVP_EXPORT") exportMD();
+    // Solicitud directa desde popup/background para leer localStorage de la página
+    if (msg?.type === 'GET_LOCALSTORAGE') {
+      try {
+        const data = readLocalStorageSafe();
+        sendResponse?.({ ok: true, data });
+      } catch (err) {
+        sendResponse?.({ ok: false, error: String(err) });
+      }
+      return true;
+    }
     if (msg?.type === "SELF_NAME_UPDATED") {
       try {
         chrome.storage?.local?.get?.("selfName", (data) => {
@@ -1319,14 +1363,17 @@
   // Auto-start: activa los observers apenas se inyecta el content script
   // Esto asegura que CAPTION_EVENT comience a publicarse sin depender del popup.
   try {
-    start();
-    // Señalar inicio de reunión si hay código en la URL
-    try {
-      const m = String(location.pathname || '');
-      if (/\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\b|$)/i.test(m)) {
-        chrome.runtime.sendMessage({ type: 'MEETING_STARTED' });
-      }
-    } catch {}
+    const isMeet = String(location.hostname || '') === 'meet.google.com';
+    if (isMeet) {
+      start();
+      // Señalar inicio de reunión si hay código en la URL
+      try {
+        const m = String(location.pathname || '');
+        if (/\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\b|$)/i.test(m)) {
+          chrome.runtime.sendMessage({ type: 'MEETING_STARTED' });
+        }
+      } catch {}
+    }
   } catch {}
 })();
   // Verifica si los subtítulos están activos por presencia de overlay/regiones
